@@ -1,0 +1,33 @@
+x-base: &BASE
+  build:
+    context: docker/
+  init: true
+  privileged: true
+  volumes:
+    - /dev:/dev
+    - .:/app
+
+x-modbus: &MODBUS
+  <<: *BASE
+  depends_on:
+    builder:
+      condition: service_completed_successfully
+    devices:
+      condition: service_started
+
+services:
+  builder:
+    <<: *BASE
+    command: make
+
+  devices:
+    <<: *BASE
+    command: socat -ddd PTY,link=/dev/ttyUSB0,raw,echo=0 PTY,link=/dev/ttyUSB1,raw,echo=0
+
+  slave:
+    <<: *MODBUS
+    command: sh -c "sleep 1 && exec python3 ./docker/slave.py"
+
+  master:
+    <<: *MODBUS
+    command: sh -c "sleep 2 && exec python3 -u ./docker/master.py"
