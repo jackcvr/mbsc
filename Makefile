@@ -21,7 +21,7 @@ CXX_OBJS = $(CXX_SOURCES:.cpp=.o)
 TEST_BIN = build/tests
 TEST_SOURCES = $(wildcard tests/*_test.cpp)
 
-.PHONY: all deps clean buildx test testx
+.PHONY: all deps clean purge buildx test testx
 
 all: $(TARGET)
 
@@ -42,13 +42,16 @@ update_deps:
 	done
 
 clean:
-	rm -f build/* $(C_OBJS) $(CXX_OBJS) core.*
+	rm -f $(C_OBJS) $(CXX_OBJS) core.*
+
+purge: clean
+	rm -f build/*
 
 test:
 	g++ -g -std=c++23 -Wall -Wextra -Iinclude $(TEST_SOURCES) -lgtest -lgtest_main -pthread -o $(TEST_BIN)
 	./$(TEST_BIN)
 
-buildx:
+buildx: clean
 	docker run --privileged --rm tonistiigi/binfmt --install all
 	docker buildx build --platform linux/$(ARCH) -t $(NAME):$(ARCH) --load docker/
 	docker run --rm --platform linux/$(ARCH) -v $(CURDIR):/app $(NAME):$(ARCH) make ARCH=$(ARCH)
