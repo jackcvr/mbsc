@@ -13,7 +13,7 @@ A Modbus command-line interface.
 ## Usage
 
 ```text
-Usage: ./build/mbst [-s] [-o device,baud_rate,parity,data_bits,stop_bits] [<action(rb|rr|rib|rir|wb|wr|req)> <slave_id> <address> [<count|payload>]]
+Usage: ./build/mbsc [-s] [-o device,baud_rate,parity,data_bits,stop_bits] [<action(rb|rr|rib|rir|wb|wr|req)> <slave_id> <address> [<count|payload>]]
 
 Connection Parameters (-o, comma-separated, omit to use defaults):
   device      (default: /dev/ttyUSB0)
@@ -32,9 +32,9 @@ Execution Modes:
   Single-shot:  Provide an action command to execute it once and exit.
 
 Examples:
-  ./build/mbst -o /dev/ttyS0,9600,E           (Interactive: Changes device, baud_rate, parity)
-  ./build/mbst -s -o /dev/ttyUSB1             (Interactive: Enable sniffer on custom device)
-  ./build/mbst rr 1 0x64 2                    (Single-shot: Read 2 registers from slave 1 at addr 0x64)
+  ./build/mbsc -o /dev/ttyS0,9600,E           (Interactive: Changes device, baud_rate, parity)
+  ./build/mbsc -s -o /dev/ttyUSB1             (Interactive: Enable sniffer on custom device)
+  ./build/mbsc rr 1 0x64 2                    (Single-shot: Read 2 registers from slave 1 at addr 0x64)
 
 Actions:
   req <frame>                                 - Send raw frame
