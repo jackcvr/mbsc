@@ -329,6 +329,7 @@ Actions:
   rir <slave_id> <address> [<count>]          - Read Input Register(s))",
                  prog_name);
 }
+
 std::atomic<bool>* g_is_running;
 
 extern "C" void handle_signal(int /*signo*/) {
