@@ -4,6 +4,7 @@
 #include <readline/readline.h>
 // clang-format on
 
+#include <array>
 #include <termios.h>
 #include <unistd.h>
 
@@ -64,8 +65,8 @@ struct Config {
 
 struct AppContext {
     Config config;
-    Serial* serial = nullptr;
-    Modbus* modbus = nullptr;
+    Serial& serial;
+    Modbus& modbus;
     std::mutex mtx;
     std::atomic<bool> is_requesting{false};
     std::atomic<bool> is_running{true};
@@ -144,7 +145,7 @@ void modbus_listen(AppContext* ctx) {
             if (ctx->is_requesting.load(std::memory_order_relaxed)) {
                 continue;
             }
-            int n = recv_adu(*serial, buf, 10, INTER_BYTE_TIMEOUT_MS);
+            int n = recv_adu(serial, buf, 10, INTER_BYTE_TIMEOUT_MS);
             if (n > 0) {
                 print(format_payload(buf));
             }
@@ -178,8 +179,8 @@ void process_line(AppContext& ctx, const std::string& line) {
     }
 
     auto config = ctx.config;
-    auto* serial = ctx.serial;
-    auto* modbus = ctx.modbus;
+    auto serial = ctx.serial;
+    auto modbus = ctx.modbus;
 
     ctx.is_requesting.store(true);
     ctx.is_requesting.notify_all();
@@ -190,12 +191,12 @@ void process_line(AppContext& ctx, const std::string& line) {
     });
 
     try {
-        serial_tcflush(*serial);
+        serial_tcflush(serial);
 
         if (action == actions::REQ) {
             auto values = read_payload<std::uint8_t>(iss);
-            send_adu(*serial, values);
-            int n = recv_adu(*serial, values, config.read_timeout_ms, 50);
+            send_adu(serial, values);
+            int n = recv_adu(serial, values, config.read_timeout_ms, 50);
             if (n > 0) {
                 print(format_payload(values));
                 return;
@@ -218,46 +219,46 @@ void process_line(AppContext& ctx, const std::string& line) {
             }
         }
 
-        modbus->invoke(nmbs_set_destination_rtu_address, slave_id);
+        modbus.invoke(nmbs_set_destination_rtu_address, slave_id);
 
         if (action == actions::WB) {
             auto payload = read_payload<std::uint8_t>(iss);
             count = payload.size();
             if (count == 1) {
-                modbus->call(nmbs_write_single_coil, address, payload[0]);
+                modbus.call(nmbs_write_single_coil, address, payload[0]);
             } else {
-                modbus->call(nmbs_write_multiple_coils, address, static_cast<int>(count), payload.data());
+                modbus.call(nmbs_write_multiple_coils, address, static_cast<int>(count), payload.data());
             }
             print(format_payload(payload, count));
 
         } else if (action == actions::RB) {
             std::vector<std::uint8_t> payload(count);
-            modbus->call(nmbs_read_coils, address, count, payload.data());
+            modbus.call(nmbs_read_coils, address, count, payload.data());
             print(format_payload(payload, count));
 
         } else if (action == actions::WR) {
             auto payload = read_payload<std::uint16_t>(iss);
             count = payload.size();
             if (count == 1) {
-                modbus->call(nmbs_write_single_register, address, payload[0]);
+                modbus.call(nmbs_write_single_register, address, payload[0]);
             } else {
-                modbus->call(nmbs_write_multiple_registers, address, static_cast<int>(count), payload.data());
+                modbus.call(nmbs_write_multiple_registers, address, static_cast<int>(count), payload.data());
             }
             print(format_payload(payload, count));
 
         } else if (action == actions::RR) {
             std::vector<std::uint16_t> payload(count);
-            modbus->call(nmbs_read_holding_registers, address, count, payload.data());
+            modbus.call(nmbs_read_holding_registers, address, count, payload.data());
             print(format_payload(payload, count));
 
         } else if (action == actions::RIB) {
             std::vector<std::uint8_t> payload(count);
-            modbus->call(nmbs_read_discrete_inputs, address, count, payload.data());
+            modbus.call(nmbs_read_discrete_inputs, address, count, payload.data());
             print(format_payload(payload, count));
 
         } else if (action == actions::RIR) {
             std::vector<std::uint16_t> payload(count);
-            modbus->call(nmbs_read_input_registers, address, count, payload.data());
+            modbus.call(nmbs_read_input_registers, address, count, payload.data());
             print(format_payload(payload, count));
         } else {
             throw std::invalid_argument("invalid action");
@@ -354,10 +355,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    AppContext ctx;
-    g_is_running = &ctx.is_running;
-    auto& config = ctx.config;
-
+    Config config;
     if (!opts.empty()) {
         std::istringstream iss{std::string(opts)};
         std::string token;
@@ -374,7 +372,6 @@ int main(int argc, char* argv[]) {
         serial_free(s);
     });
     Serial serial(*s);
-    ctx.serial = &serial;
     serial_parity_t parity_enum = (config.parity == 'E')   ? PARITY_EVEN
                                   : (config.parity == 'O') ? PARITY_ODD
                                                            : PARITY_NONE;
@@ -395,7 +392,6 @@ int main(int argc, char* argv[]) {
 
     nmbs_t nmbs;
     Modbus modbus(nmbs);
-    ctx.modbus = &modbus;
     modbus.call(nmbs_client_create, &platform_conf);
     modbus.invoke(nmbs_set_read_timeout, config.read_timeout_ms);
     modbus.invoke(nmbs_set_byte_timeout, 50);
@@ -406,6 +402,16 @@ int main(int argc, char* argv[]) {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
+
+    AppContext ctx {
+        .config = config,
+        .serial = serial,
+        .modbus = modbus,
+        .mtx = {},
+        .is_requesting = false,
+        .is_running = true
+    };
+    g_is_running = &ctx.is_running;
 
     serial_tcflush(serial);
 
