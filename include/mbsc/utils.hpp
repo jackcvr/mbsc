@@ -1,15 +1,13 @@
 #pragma once
 
 #include <charconv>
-#include <format>
 #include <iterator>
-#include <ranges>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+#include <span>
 
 template <std::invocable F>
 class Defer {
@@ -28,28 +26,6 @@ protected:
 template <typename T, typename... Args>
 constexpr bool is_any(const T& val, const Args&... args) noexcept {
     return ((val == args) || ...);
-}
-
-inline int get_request_len(std::span<const std::uint8_t> adu) noexcept {
-    // Ensure we have at least enough bytes to read the Function Code
-    if (adu.size() < 2) return -1;
-    int fc = adu[1];
-    // FC 01 to 06 are always exactly 8 bytes long (1 ID + 1 FC + 4 Data + 2 CRC)
-    if (fc >= 1 && fc <= 6) return 8;
-    // FC 15 and 16 have a dynamic length indicated by byte index 6
-    if (fc == 15 || fc == 16) {
-        if (adu.size() < 7) return -1;  // Safety check before reading index 6
-        return 9 + adu[6];
-    }
-    // FC 22 is always 10 bytes
-    if (fc == 22) return 10;
-    // FC 23 has a dynamic length indicated by byte index 10
-    if (fc == 23) {
-        if (adu.size() < 11) return -1;  // Safety check before reading index 10
-        return 11 + adu[10];
-    }
-    // Unknown or incomplete frame
-    return -1;
 }
 
 inline int get_response_len(std::span<const std::uint8_t> pdu) {

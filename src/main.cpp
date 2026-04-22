@@ -20,7 +20,9 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <span>
 
+#include "../include/mbsc/constants.hpp"
 #include "mbsc/constants.hpp"
 #include "mbsc/utils.hpp"
 #include "mbsc/wrapper.hpp"
@@ -104,27 +106,46 @@ int send_adu(Serial& serial, std::span<const std::uint8_t> frame) {
     return serial.call(serial_write, frame.data(), frame.size());
 }
 
-int recv_adu(Serial& serial, std::vector<std::uint8_t>& buf, std::int32_t read_timeout_ms, std::int32_t byte_timeout_ms) {
+int recv_adu(Serial& serial, std::vector<std::uint8_t>& buf, std::vector<std::uint8_t>& adu, std::int32_t read_timeout_ms, std::int32_t byte_timeout_ms) {
     constexpr size_t MAX_ADU_SIZE = 260;
-
-    buf.clear();
-    buf.reserve(MAX_ADU_SIZE);
+    adu.clear();
     std::array<uint8_t, MAX_ADU_SIZE> chunk{};
 
-    int n = serial.call(serial_read, chunk.data(), 1, read_timeout_ms);
-    if (n > 0) {
-        buf.push_back(chunk[0]);
-        while (true) {
+    while (true) {
+        if (buf.size() >= 4) {
+            for (size_t len = 4; len <= buf.size(); ++len) {
+                std::uint16_t calc_crc = nmbs_crc_calc(buf.data(), len - 2, nullptr);
+                std::uint16_t frame_crc = buf[len - 2] << 8 | buf[len - 1];
+
+                if (calc_crc == frame_crc) {
+                    adu.assign(buf.begin(), buf.begin() + len);
+                    buf.erase(buf.begin(), buf.begin() + len);
+                    return static_cast<int>(adu.size());
+                }
+            }
+        }
+
+        int timeout = buf.empty() ? read_timeout_ms : byte_timeout_ms;
+        int n = serial.call(serial_read, chunk.data(), 1, timeout);
+
+        if (n > 0) {
+            buf.push_back(chunk[0]);
             int more = serial.call(serial_read, chunk.data(), chunk.size(), byte_timeout_ms);
             if (more > 0) {
                 buf.insert(buf.end(), chunk.begin(), chunk.begin() + more);
-                if (buf.size() >= MAX_ADU_SIZE) break;
-            } else {
-                break;
             }
+        } else {
+            break;
         }
     }
-    return static_cast<int>(buf.size());
+
+    if (!buf.empty()) {
+        adu = buf;
+        buf.clear();
+        return -static_cast<int>(adu.size());
+    }
+
+    return 0;
 }
 
 /*
@@ -135,8 +156,9 @@ void modbus_listen(AppContext* ctx) {
     // 10ms is a safe user-space approximation for the Modbus t3.5 silence gap.
     constexpr int32_t INTER_BYTE_TIMEOUT_MS = 10;
 
-    auto serial = ctx->serial;
+    auto& serial = ctx->serial;
     std::vector<std::uint8_t> buf;
+    std::vector<std::uint8_t> adu;
 
     while (ctx->is_running.load(std::memory_order_relaxed)) {
         try {
@@ -145,9 +167,13 @@ void modbus_listen(AppContext* ctx) {
             if (ctx->is_requesting.load(std::memory_order_relaxed)) {
                 continue;
             }
-            int n = recv_adu(serial, buf, 10, INTER_BYTE_TIMEOUT_MS);
-            if (n > 0) {
-                print(format_payload(buf));
+            while (true) {
+                int n = recv_adu(serial, buf, adu, 10, INTER_BYTE_TIMEOUT_MS);
+                if (n != 0) {
+                    print(format_payload(adu));
+                } else {
+                    break;
+                }
             }
         } catch (const std::exception& e) {
             print_error(error_types::SYSTEM, e.what());
@@ -196,12 +222,15 @@ void process_line(AppContext& ctx, const std::string& line) {
         if (action == actions::REQ) {
             auto values = read_payload<std::uint8_t>(iss);
             send_adu(serial, values);
-            int n = recv_adu(serial, values, config.read_timeout_ms, 50);
+
+            std::vector<std::uint8_t> buf;
+            std::vector<std::uint8_t> adu;
+            int n = recv_adu(serial, buf, adu, config.read_timeout_ms, 50);
             if (n > 0) {
-                print(format_payload(values));
+                print(format_payload(adu));
                 return;
             }
-            throw ModbusError("timeout");
+            throw ModbusError("timeout or corrupted data");
         }
 
         std::string _slave_id, _address;

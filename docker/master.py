@@ -3,6 +3,7 @@ import itertools
 import subprocess
 import time
 import sys
+import logging
 import selectors
 
 NAME = "mbsc.amd64"
@@ -10,9 +11,7 @@ REQUESTS = ["rr 1 0 2", "req 01030062000265D5"]
 POLL_INTERVAL = 5.0
 RESPONSE_TIMEOUT = 2.0
 
-
-def print_error(*args):
-    print(*args, file=sys.stderr)
+logging.basicConfig(level=logging.INFO)
 
 
 def main():
@@ -29,8 +28,7 @@ def main():
     sel.register(p.stdout, selectors.EVENT_READ)
     sel.register(p.stderr, selectors.EVENT_READ)
 
-    print("Starting Modbus polling loop. Press Ctrl+C to exit.")
-    print("-" * 30)
+    logging.info("Starting Modbus polling loop. Press Ctrl+C to exit.")
 
     requests = iter(itertools.cycle(REQUESTS))
     next_request_time = time.monotonic()
@@ -40,7 +38,7 @@ def main():
         while True:
             # Check if the process died
             if p.poll() is not None:
-                print_error("Error: The process terminated unexpectedly.")
+                logging.error("The process terminated unexpectedly.")
                 break
 
             events = sel.select(timeout=0.1)
@@ -58,13 +56,14 @@ def main():
                 if not line:
                     continue
 
-                ts = time.strftime("%H:%M:%S")
-
                 # Format based on which pipe the data came from
                 if pipe is p.stderr:
-                    print_error(f"[{ts}] ERROR: {line}")
+                    logging.error(line)
                 else:
-                    print(f"[{ts}] {line}")
+                    if request_time:
+                        logging.info(line)
+                    else:
+                        logging.info("> %s", line)
 
                 # Clear the timeout clock if we got ANY response or error
                 if request_time is not None:
@@ -75,8 +74,7 @@ def main():
 
             # Check for timeout
             if request_time and now > request_time + RESPONSE_TIMEOUT:
-                ts = time.strftime("%H:%M:%S")
-                print_error(f"[{ts}] Timeout: No response received")
+                logging.error(f"Timeout: No response received")
                 request_time = None
 
             # Send the next request
@@ -87,7 +85,7 @@ def main():
                     request_time = now
                     next_request_time += POLL_INTERVAL
                 except BrokenPipeError:
-                    print_error("Error: Unable to write to process (broken pipe).")
+                    logging.error("Unable to write to process (broken pipe).")
                     break
 
     except KeyboardInterrupt:
