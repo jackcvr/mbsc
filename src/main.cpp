@@ -1,21 +1,22 @@
-// clang-format off
 #include <cstdio>
+
+// clang-format off
 #include <readline/history.h>
 #include <readline/readline.h>
 // clang-format on
 
-#include <termios.h>
 #include <unistd.h>
 
-#include <array>
 #include <atomic>
-#include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <mutex>
 #include <print>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -23,10 +24,10 @@
 #include <thread>
 #include <vector>
 
-#include "../include/mbsc/constants.hpp"
 #include "mbsc/constants.hpp"
 #include "mbsc/modbus.hpp"
 #include "mbsc/utils.hpp"
+#include "nanomodbus/nanomodbus.h"
 
 struct Config {
   std::string device = "/dev/ttyUSB0";
@@ -47,7 +48,9 @@ struct AppContext {
 
 inline void Print(std::string_view msg) { std::println("{}", msg); }
 
-inline void PrintError(std::string_view type, std::string_view msg) { std::println(stderr, "{}: {}", type, msg); }
+inline void PrintError(std::string_view type, std::string_view msg) {
+  std::println(stderr, "{}: {}", type, msg);
+}
 
 /*
  * output format:
@@ -64,14 +67,14 @@ void ModbusListen(AppContext* ctx) {
   while (ctx->is_running.load(std::memory_order_relaxed)) {
     try {
       ctx->is_requesting.wait(true);
-      std::lock_guard lock(ctx->mtx);
+      std::scoped_lock lock(ctx->mtx);
       if (ctx->is_requesting.load(std::memory_order_relaxed)) {
         continue;
       }
       while (true) {
         int n = modbus.RecvAdu(buf, adu, 10, kInterByteTimeoutMs);
         if (n != 0) {
-          Print(format_payload(adu));
+          Print(FormatPayload(adu));
         } else {
           break;
         }
@@ -110,7 +113,7 @@ void ProcessLine(AppContext& ctx, const std::string& line) {
 
   ctx.is_requesting.store(true);
   ctx.is_requesting.notify_all();
-  std::lock_guard lock(ctx.mtx);
+  std::scoped_lock lock(ctx.mtx);
   Defer reset_requesting([&ctx]() {
     ctx.is_requesting.store(false);
     ctx.is_requesting.notify_all();
@@ -120,14 +123,14 @@ void ProcessLine(AppContext& ctx, const std::string& line) {
     modbus.TcFlush();
 
     if (action == actions::REQ) {
-      auto values = read_payload<std::uint8_t>(iss);
+      auto values = ReadPayload<std::uint8_t>(iss);
       modbus.SendAdu(values);
 
       std::vector<std::uint8_t> buf;
       std::vector<std::uint8_t> adu;
       int n = modbus.RecvAdu(buf, adu, config.read_timeout_ms, 50);
       if (n > 0) {
-        Print(format_payload(adu));
+        Print(FormatPayload(adu));
         return;
       }
       throw ModbusError("timeout or corrupted data");
@@ -137,12 +140,12 @@ void ProcessLine(AppContext& ctx, const std::string& line) {
     if (!(iss >> str_slave_id >> str_address)) {
       throw std::invalid_argument("invalid format");
     }
-    auto slave_id = parse_number<std::uint8_t>(str_slave_id);
-    auto address = parse_number<std::uint16_t>(str_address);
+    auto slave_id = ParseNumber<std::uint8_t>(str_slave_id);
+    auto address = ParseNumber<std::uint16_t>(str_address);
     std::uint16_t count = 1;
 
-    if (is_any(action, actions::RB, actions::RR, actions::RIB, actions::RIR)) {
-      count = read_number<std::uint32_t>(iss);
+    if (IsAny(action, actions::RB, actions::RR, actions::RIB, actions::RIR)) {
+      count = ReadNumber<std::uint32_t>(iss);
       if (count <= 0) {
         throw std::invalid_argument("invalid count");
       }
@@ -151,44 +154,45 @@ void ProcessLine(AppContext& ctx, const std::string& line) {
     modbus.Invoke(nmbs_set_destination_rtu_address, slave_id);
 
     if (action == actions::WB) {
-      auto payload = read_payload<std::uint8_t>(iss);
+      auto payload = ReadPayload<std::uint8_t>(iss);
       count = payload.size();
       if (count == 1) {
         modbus.Call(nmbs_write_single_coil, address, payload[0]);
       } else {
         modbus.Call(nmbs_write_multiple_coils, address, static_cast<int>(count), payload.data());
       }
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
 
     } else if (action == actions::RB) {
       std::vector<std::uint8_t> payload(count);
       modbus.Call(nmbs_read_coils, address, count, payload.data());
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
 
     } else if (action == actions::WR) {
-      auto payload = read_payload<std::uint16_t>(iss);
+      auto payload = ReadPayload<std::uint16_t>(iss);
       count = payload.size();
       if (count == 1) {
         modbus.Call(nmbs_write_single_register, address, payload[0]);
       } else {
-        modbus.Call(nmbs_write_multiple_registers, address, static_cast<int>(count), payload.data());
+        modbus.Call(nmbs_write_multiple_registers, address, static_cast<int>(count),
+                    payload.data());
       }
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
 
     } else if (action == actions::RR) {
       std::vector<std::uint16_t> payload(count);
       modbus.Call(nmbs_read_holding_registers, address, count, payload.data());
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
 
     } else if (action == actions::RIB) {
       std::vector<std::uint8_t> payload(count);
       modbus.Call(nmbs_read_discrete_inputs, address, count, payload.data());
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
 
     } else if (action == actions::RIR) {
       std::vector<std::uint16_t> payload(count);
       modbus.Call(nmbs_read_input_registers, address, count, payload.data());
-      Print(format_payload(payload, count));
+      Print(FormatPayload(payload, count));
     } else {
       throw std::invalid_argument("invalid action");
     }

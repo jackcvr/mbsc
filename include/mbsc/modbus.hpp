@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <mbsc/wrapper.hpp>
 #include <span>
@@ -13,7 +14,6 @@
 #include <utility>
 #include <vector>
 
-#include "wrapper.hpp"
 #include "nanomodbus/nanomodbus.h"
 #include "serial/serial.h"
 
@@ -46,19 +46,22 @@ using Nmbs = Wrapper<nmbs_t>;
 
 class Modbus {
  public:
-  explicit Modbus(std::string_view device, int baud_rate, int data_bits, char parity, int stop_bits, bool xonxoff,
-                  bool rtscts) {
+  explicit Modbus(std::string_view device, int baud_rate, int data_bits, char parity, int stop_bits,
+                  bool xonxoff, bool rtscts) {
     serial_ = serial_new();
     if (serial_ == nullptr) {
       throw std::runtime_error("Failed to allocate serial port.");
     }
 
-    serial_parity_t parity_enum = (parity == 'E') ? PARITY_EVEN : (parity == 'O') ? PARITY_ODD : PARITY_NONE;
+    serial_parity_t parity_enum = (parity == 'E')   ? PARITY_EVEN
+                                  : (parity == 'O') ? PARITY_ODD
+                                                    : PARITY_NONE;
 
     try {
-      Serial(*serial_).Call(serial_open_advanced, device.data(), static_cast<std::uint32_t>(baud_rate),
-                                       static_cast<unsigned int>(data_bits), parity_enum,
-                                       static_cast<unsigned int>(stop_bits), xonxoff, rtscts);
+      Serial(*serial_).Call(serial_open_advanced, device.data(),
+                            static_cast<std::uint32_t>(baud_rate),
+                            static_cast<unsigned int>(data_bits), parity_enum,
+                            static_cast<unsigned int>(stop_bits), xonxoff, rtscts);
 
       nmbs_platform_conf platform_conf;
       nmbs_platform_conf_create(&platform_conf);
@@ -70,30 +73,22 @@ class Modbus {
       Nmbs(nmbs_).Call(nmbs_client_create, &platform_conf);
 
     } catch (...) {
-      serial_close(serial_);
-      serial_free(serial_);
+      Close();
       throw;
     }
   }
 
-  ~Modbus() {
-    if (serial_ != nullptr) {
-      serial_close(serial_);
-      serial_free(serial_);
-    }
-  }
+  ~Modbus() { Close(); }
 
   Modbus(const Modbus&) = delete;
   Modbus& operator=(const Modbus&) = delete;
 
-  Modbus(Modbus&& other) noexcept : serial_(std::exchange(other.serial_, nullptr)), nmbs_(other.nmbs_) {}
+  Modbus(Modbus&& other) noexcept
+      : serial_(std::exchange(other.serial_, nullptr)), nmbs_(other.nmbs_) {}
 
   Modbus& operator=(Modbus&& other) noexcept {
     if (this != &other) {
-      if (serial_ != nullptr) {
-        serial_close(serial_);
-        serial_free(serial_);
-      }
+      Close();
       serial_ = std::exchange(other.serial_, nullptr);
       nmbs_ = other.nmbs_;
     }
@@ -117,12 +112,12 @@ class Modbus {
   }
 
   int SendAdu(std::span<const std::uint8_t> frame) {
-    auto sw = Serial(*serial_);
-    return sw.Call(serial_write, frame.data(), static_cast<std::uint16_t>(frame.size()));
+    return Serial(*serial_).Call(serial_write, frame.data(),
+                                 static_cast<std::uint16_t>(frame.size()));
   }
 
-  int RecvAdu(std::vector<std::uint8_t>& buf, std::vector<std::uint8_t>& adu, std::int32_t read_timeout_ms,
-              std::int32_t byte_timeout_ms) {
+  int RecvAdu(std::vector<std::uint8_t>& buf, std::vector<std::uint8_t>& adu,
+              std::int32_t read_timeout_ms, std::int32_t byte_timeout_ms) {
     constexpr size_t kMaxAduSize = 260;
 
     adu.clear();
@@ -133,10 +128,7 @@ class Modbus {
       if (buf.size() >= 4) {
         for (size_t len = 4; len <= buf.size(); ++len) {
           std::uint16_t calc_crc = nmbs_crc_calc(buf.data(), len - 2, nullptr);
-
-          // Reverted to your original logic
           std::uint16_t frame_crc = (static_cast<std::uint16_t>(buf[len - 2]) << 8) | buf[len - 1];
-
           if (calc_crc == frame_crc) {
             adu.assign(buf.begin(), buf.begin() + len);
             buf.erase(buf.begin(), buf.begin() + len);
@@ -147,10 +139,10 @@ class Modbus {
 
       int timeout = buf.empty() ? read_timeout_ms : byte_timeout_ms;
       int n = sw.Call(serial_read, chunk.data(), 1, timeout);
-
       if (n > 0) {
         buf.push_back(chunk[0]);
-        int more = sw.Call(serial_read, chunk.data(), static_cast<std::uint16_t>(chunk.size()), byte_timeout_ms);
+        int more = sw.Call(serial_read, chunk.data(), static_cast<std::uint16_t>(chunk.size()),
+                           byte_timeout_ms);
         if (more > 0) {
           buf.insert(buf.end(), chunk.begin(), chunk.begin() + more);
         }
@@ -169,8 +161,16 @@ class Modbus {
   }
 
  protected:
-  static std::int32_t ReadSerialCallback(std::uint8_t* buf, std::uint16_t count, std::int32_t byte_timeout_ms,
-                                         void* arg) {
+  void Close() {
+    if (serial_ != nullptr) {
+      serial_close(serial_);
+      serial_free(serial_);
+      serial_ = nullptr;
+    }
+  }
+
+  static std::int32_t ReadSerialCallback(std::uint8_t* buf, std::uint16_t count,
+                                         std::int32_t byte_timeout_ms, void* arg) {
     serial_t* serial = static_cast<serial_t*>(arg);
     int result = serial_read(serial, buf, count, byte_timeout_ms);
     return (result < 0) ? -1 : result;

@@ -27,7 +27,8 @@ RUN apk add --no-cache \
     readline-dev \
     ncurses-static \
     readline-static \
-    gtest-dev
+    gtest-dev \
+    clang-extra-tools
 
 WORKDIR /app
 

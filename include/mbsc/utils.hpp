@@ -1,11 +1,15 @@
 #pragma once
 
-#include <charconv>
+#include <concepts>
+#include <cstddef>
 #include <iterator>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,39 +28,12 @@ class Defer {
 };
 
 template <typename T, typename... Args>
-constexpr bool is_any(const T& val, const Args&... args) noexcept {
+constexpr bool IsAny(const T& val, const Args&... args) noexcept {
   return ((val == args) || ...);
 }
 
-inline int get_response_len(std::span<const std::uint8_t> pdu) {
-  if (pdu.empty()) return 0;
-  std::uint8_t fc = pdu[0];
-  switch (fc) {
-    case 0x01:
-    case 0x02: {
-      if (pdu.size() < 5) return 0;
-      std::uint16_t qty = pdu[3] << 8 | pdu[4];
-      return 2 + (qty + 7) / 8;
-    }
-    case 0x03:
-    case 0x04: {
-      if (pdu.size() < 5) return 0;
-      std::uint16_t qty = pdu[3] << 8 | pdu[4];
-      return 2 + qty * 2;
-    }
-    case 0x05:
-    case 0x06:
-    case 0x0F:
-    case 0x10:
-      return 5;
-    default:
-      // Max PDU size minus Slave address and CRC
-      return 253;
-  }
-}
-
 template <typename T>
-constexpr T parse_number(std::string_view number) {
+constexpr T ParseNumber(std::string_view number) {
   static_assert(std::is_unsigned_v<T>, "parse_number only supports unsigned integral types");
   if (number.empty()) throw std::invalid_argument("empty word");
   if (number.starts_with('-')) throw std::invalid_argument("negative numbers are not allowed");
@@ -82,17 +59,17 @@ constexpr T parse_number(std::string_view number) {
 }
 
 template <typename T>
-T read_number(std::istringstream& iss, const T _default = 1) {
+T ReadNumber(std::istringstream& iss, const T _default = 1) {
   std::string _count;
   T count = _default;
   if (iss >> _count) {
-    count = parse_number<T>(_count);
+    count = ParseNumber<T>(_count);
   }
   return count;
 }
 
 template <typename T>
-std::vector<T> parse_payload(std::string_view payload) {
+std::vector<T> ParsePayload(std::string_view payload) {
   static_assert(std::is_integral_v<T>, "T must be an integral type");
   constexpr std::size_t value_len = sizeof(T) * 2;
   if (payload.length() % value_len != 0) {
@@ -115,16 +92,16 @@ std::vector<T> parse_payload(std::string_view payload) {
 }
 
 template <typename T>
-std::vector<T> read_payload(std::istringstream& iss) {
+std::vector<T> ReadPayload(std::istringstream& iss) {
   std::string s;
   if (!(iss >> s)) throw std::invalid_argument("missing payload");
-  auto payload = parse_payload<T>(s);
+  auto payload = ParsePayload<T>(s);
   if (payload.empty()) throw std::invalid_argument("bad payload");
   return payload;
 }
 
 template <typename T>
-std::string format_payload(const T& payload, int len = -1) {
+std::string FormatPayload(const T& payload, int len = -1) {
   using ValueType = std::remove_cvref_t<decltype(payload[0])>;
   constexpr std::size_t chars_count = sizeof(ValueType) * 2;
   std::size_t actual_len = (len == -1) ? std::size(payload) : static_cast<std::size_t>(len);

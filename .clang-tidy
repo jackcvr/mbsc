@@ -1,0 +1,13 @@
+Checks: >
+  bugprone-*,
+  modernize-*,
+  google-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-branch-clone,
+  -bugprone-narrowing-conversions,
+  -modernize-use-auto,
+  -modernize-use-scoped-lock,
+  -bugprone-exception-escape
+WarningsAsErrors: '*'
