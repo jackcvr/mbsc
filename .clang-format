@@ -1,5 +1,5 @@
 BasedOnStyle: Google
-IndentWidth: 4
-AccessModifierOffset: -4
+IndentWidth: 2
+AccessModifierOffset: -1
 ColumnLimit: 119
 NamespaceIndentation: All
