@@ -6,9 +6,8 @@ It supports both single-shot commands for scripting and an interactive REPL for 
 ## Features
 
 * Interactive REPL.
-* Background traffic sniffing.
 * Support for standard Modbus functions (Read/Write Coils, Registers).
-* Raw PDU frame transmission.
+* Raw ADU frame reading/writing/sniffing.
 
 ## Usage
 
